@@ -1,0 +1,1015 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Aquarium Dashboard</title>
+    <meta http-equiv="refresh" content="5">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-primary: #0a0e1a;
+            --bg-secondary: #111827;
+            --card-bg: #1a1f2e;
+            --card-border: #2d3548;
+            --text-primary: #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted: #64748b;
+            --accent: #22d3ee;
+            --accent-glow: rgba(34, 211, 238, 0.3);
+            --success: #10b981;
+            --success-glow: rgba(16, 185, 129, 0.3);
+            --danger: #ef4444;
+            --danger-glow: rgba(239, 68, 68, 0.4);
+            --warning: #f59e0b;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body { 
+            font-family: 'Montserrat', sans-serif; 
+            background: linear-gradient(135deg, var(--bg-primary) 0%, var(--bg-secondary) 100%);
+            color: var(--text-primary); 
+            min-height: 100vh;
+            padding: 30px 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        /* Header Styles */
+        .header { 
+            text-align: center; 
+            margin-bottom: 50px;
+            padding: 30px;
+            background: var(--card-bg);
+            border-radius: 24px;
+            border: 1px solid var(--card-border);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+        }
+
+        .header h1 { 
+            font-size: 2.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent) 0%, #818cf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            margin-bottom: 15px;
+            letter-spacing: -0.5px;
+        }
+
+        .header-subtitle {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            font-weight: 400;
+            margin-bottom: 20px;
+        }
+
+        .status-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .status-badge { 
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px; 
+            border-radius: 50px; 
+            font-size: 0.85rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            transition: all 0.3s ease;
+        }
+
+        .status-badge.online {
+            background: linear-gradient(135deg, rgba(16, 185, 129, 0.2) 0%, rgba(16, 185, 129, 0.1) 100%);
+            border: 1px solid var(--success);
+            color: var(--success);
+            box-shadow: 0 0 20px var(--success-glow);
+        }
+
+        .status-badge.offline {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%);
+            border: 1px solid var(--danger);
+            color: var(--danger);
+            box-shadow: 0 0 20px var(--danger-glow);
+        }
+
+        .status-badge.alert {
+            background: linear-gradient(135deg, rgba(245, 158, 11, 0.2) 0%, rgba(245, 158, 11, 0.1) 100%);
+            border: 1px solid var(--warning);
+            color: var(--warning);
+            animation: pulse 2s infinite;
+        }
+
+        .status-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            animation: blink 1.5s infinite;
+        }
+
+        .status-dot.online { background: var(--success); }
+        .status-dot.offline { background: var(--danger); }
+
+        .device-name {
+            color: var(--text-muted);
+            font-size: 0.85rem;
+            font-weight: 500;
+        }
+
+        /* Grid Layout */
+        .grid { 
+            display: grid; 
+            grid-template-columns: repeat(3, 1fr);
+            gap: 25px; 
+            margin-bottom: 40px;
+        }
+
+        @media (max-width: 900px) {
+            .grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (max-width: 600px) {
+            .grid {
+                grid-template-columns: 1fr;
+            }
+            .header h1 {
+                font-size: 1.8rem;
+            }
+        }
+
+        /* Card Styles */
+        .card { 
+            background: var(--card-bg);
+            padding: 30px;
+            border-radius: 24px;
+            border: 1px solid var(--card-border);
+            box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.4);
+            text-align: center;
+            transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, var(--accent), #818cf8);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.5);
+        }
+
+        .card:hover::before {
+            opacity: 1;
+        }
+
+        /* Alert Card Styles */
+        .card.alert {
+            border: 2px solid var(--danger);
+            box-shadow: 
+                0 0 30px var(--danger-glow),
+                0 0 60px var(--danger-glow),
+                inset 0 0 30px rgba(239, 68, 68, 0.05);
+            animation: alertGlow 2s ease-in-out infinite;
+        }
+
+        .card.alert::before {
+            background: var(--danger);
+            opacity: 1;
+        }
+
+        .card.alert .value {
+            color: var(--danger);
+        }
+
+        @keyframes alertGlow {
+            0%, 100% { box-shadow: 0 0 30px var(--danger-glow), 0 0 60px var(--danger-glow); }
+            50% { box-shadow: 0 0 40px var(--danger-glow), 0 0 80px var(--danger-glow); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* Card Icon */
+        .card-icon {
+            width: 60px;
+            height: 60px;
+            margin: 0 auto 15px;
+            border-radius: 16px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.8rem;
+            background: linear-gradient(135deg, rgba(34, 211, 238, 0.15) 0%, rgba(129, 140, 248, 0.15) 100%);
+            border: 1px solid rgba(34, 211, 238, 0.2);
+        }
+
+        .card.alert .card-icon {
+            background: linear-gradient(135deg, rgba(239, 68, 68, 0.2) 0%, rgba(239, 68, 68, 0.1) 100%);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+
+        .label { 
+            color: var(--text-secondary); 
+            text-transform: uppercase; 
+            letter-spacing: 1.5px; 
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .value { 
+            font-size: 3.5rem; 
+            font-weight: 700; 
+            margin: 15px 0; 
+            color: var(--accent);
+            line-height: 1;
+        }
+
+        .unit { 
+            font-size: 0.35em; 
+            color: var(--text-secondary);
+            font-weight: 500;
+            margin-left: 5px;
+        }
+
+        .status-text {
+            font-size: 0.85rem;
+            font-weight: 500;
+            padding: 6px 14px;
+            border-radius: 20px;
+            display: inline-block;
+        }
+
+        .status-text.ok {
+            color: var(--success);
+            background: rgba(16, 185, 129, 0.1);
+        }
+
+        .status-text.warning {
+            color: var(--danger);
+            background: rgba(239, 68, 68, 0.1);
+        }
+
+        .range-info {
+            margin-top: 12px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* Relay Toggle Indicator */
+        .relay-status {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            margin: 15px 0;
+        }
+
+        .relay-indicator {
+            width: 60px;
+            height: 30px;
+            border-radius: 15px;
+            position: relative;
+            transition: all 0.3s ease;
+        }
+
+        .relay-indicator.off {
+            background: linear-gradient(135deg, #374151 0%, #1f2937 100%);
+            border: 1px solid #4b5563;
+        }
+
+        .relay-indicator.on {
+            background: linear-gradient(135deg, var(--success) 0%, #059669 100%);
+            border: 1px solid var(--success);
+            box-shadow: 0 0 15px var(--success-glow);
+        }
+
+        .relay-indicator::after {
+            content: '';
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            top: 2px;
+            transition: all 0.3s ease;
+            background: white;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .relay-indicator.off::after {
+            left: 3px;
+        }
+
+        .relay-indicator.on::after {
+            left: 33px;
+        }
+
+        .relay-label {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .relay-state {
+            font-size: 0.75rem;
+            font-weight: 500;
+            padding: 4px 10px;
+            border-radius: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .relay-state.on {
+            color: var(--success);
+            background: rgba(16, 185, 129, 0.15);
+        }
+
+        .relay-state.off {
+            color: var(--text-muted);
+            background: rgba(100, 116, 139, 0.15);
+        }
+
+        /* Water Level Bar */
+        .water-level-bar {
+            width: 100%;
+            height: 12px;
+            background: #1f2937;
+            border-radius: 6px;
+            overflow: hidden;
+            margin: 10px 0;
+            border: 1px solid var(--card-border);
+        }
+
+        .water-level-fill {
+            height: 100%;
+            border-radius: 6px;
+            transition: width 0.5s ease, background 0.3s ease;
+        }
+
+        .water-level-fill.ok {
+            background: linear-gradient(90deg, var(--accent), #818cf8);
+        }
+
+        .water-level-fill.low {
+            background: linear-gradient(90deg, var(--danger), #f87171);
+        }
+
+        /* Thermostat Control */
+        .thermostat-card {
+            margin-bottom: 40px;
+            padding: 40px;
+            background: linear-gradient(145deg, #1a1f2e 0%, #0f1318 100%);
+            border-radius: 32px;
+            border: 1px solid var(--card-border);
+            box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.5);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .thermostat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #3b82f6, var(--accent), #f59e0b);
+        }
+
+        .thermostat-header {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 35px;
+        }
+
+        .thermostat-header h2 {
+            font-size: 1.5rem;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent) 0%, #818cf8 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+        }
+
+        .thermostat-content {
+            display: grid;
+            grid-template-columns: 1fr 1.5fr 1fr;
+            gap: 40px;
+            align-items: center;
+        }
+
+        @media (max-width: 900px) {
+            .thermostat-content {
+                grid-template-columns: 1fr;
+                gap: 30px;
+            }
+        }
+
+        /* Current Temperature Display */
+        .current-temp-section {
+            text-align: center;
+            padding: 25px;
+            background: rgba(34, 211, 238, 0.05);
+            border-radius: 24px;
+            border: 1px solid rgba(34, 211, 238, 0.15);
+        }
+
+        .current-temp-section.alert {
+            background: rgba(239, 68, 68, 0.08);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            box-shadow: 0 0 30px var(--danger-glow);
+        }
+
+        .current-temp-label {
+            font-size: 0.7rem;
+            color: var(--accent);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+
+        .current-temp-section.alert .current-temp-label {
+            color: var(--danger);
+        }
+
+        .current-temp-value {
+            font-size: 4.5rem;
+            font-weight: 700;
+            color: #ffffff;
+            line-height: 1;
+            text-shadow: 0 0 40px rgba(255, 255, 255, 0.1);
+        }
+
+        .current-temp-section.alert .current-temp-value {
+            color: var(--danger);
+        }
+
+        .current-temp-unit {
+            font-size: 0.35em;
+            color: var(--text-secondary);
+            font-weight: 400;
+            vertical-align: super;
+        }
+
+        .temp-status-badge {
+            margin-top: 15px;
+            display: inline-block;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.75rem;
+            font-weight: 600;
+        }
+
+        .temp-status-badge.ok {
+            color: var(--success);
+            background: rgba(16, 185, 129, 0.15);
+        }
+
+        .temp-status-badge.warning {
+            color: var(--danger);
+            background: rgba(239, 68, 68, 0.15);
+        }
+
+        /* Target Temperature Control */
+        .target-temp-section {
+            text-align: center;
+        }
+
+        .target-temp-label {
+            font-size: 0.7rem;
+            color: var(--warning);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 600;
+            margin-bottom: 20px;
+        }
+
+        .target-temp-display {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 25px;
+        }
+
+        .temp-btn {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            border: 2px solid var(--card-border);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            font-size: 1.5rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .temp-btn:hover {
+            border-color: var(--warning);
+            background: rgba(245, 158, 11, 0.1);
+            transform: scale(1.1);
+        }
+
+        .temp-btn:active {
+            transform: scale(0.95);
+        }
+
+        .target-temp-value {
+            font-size: 3rem;
+            font-weight: 700;
+            color: var(--warning);
+            min-width: 120px;
+        }
+
+        .target-temp-value .unit {
+            font-size: 0.4em;
+            color: var(--text-secondary);
+        }
+
+        .slider-wrapper {
+            padding: 0 10px;
+        }
+
+        .temp-slider {
+            -webkit-appearance: none;
+            width: 100%;
+            height: 10px;
+            border-radius: 5px;
+            background: linear-gradient(90deg, #3b82f6 0%, #22d3ee 35%, #10b981 50%, #f59e0b 75%, #ef4444 100%);
+            outline: none;
+            transition: all 0.3s ease;
+        }
+
+        .temp-slider::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: linear-gradient(145deg, #ffffff 0%, #e0e0e0 100%);
+            cursor: pointer;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+            transition: all 0.2s ease;
+            border: 3px solid var(--warning);
+        }
+
+        .temp-slider::-webkit-slider-thumb:hover {
+            transform: scale(1.15);
+            box-shadow: 0 6px 20px rgba(0, 0, 0, 0.5);
+        }
+
+        .temp-slider::-moz-range-thumb {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: linear-gradient(145deg, #ffffff 0%, #e0e0e0 100%);
+            cursor: pointer;
+            border: 3px solid var(--warning);
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.4);
+        }
+
+        .slider-labels {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 10px;
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+
+        .status-saved {
+            margin-top: 15px;
+            font-size: 0.8rem;
+            color: var(--success);
+            opacity: 0;
+            transition: opacity 0.3s ease;
+        }
+
+        .status-saved.show {
+            opacity: 1;
+        }
+
+        /* Heater Status Section */
+        .heater-section {
+            text-align: center;
+            padding: 25px;
+            border-radius: 24px;
+            transition: all 0.5s ease;
+        }
+
+        .heater-section.heating {
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            box-shadow: 
+                0 0 30px rgba(239, 68, 68, 0.2),
+                inset 0 0 30px rgba(239, 68, 68, 0.05);
+        }
+
+        .heater-section.idle {
+            background: rgba(100, 116, 139, 0.1);
+            border: 1px solid rgba(100, 116, 139, 0.2);
+        }
+
+        .heater-icon-wrapper {
+            width: 80px;
+            height: 80px;
+            margin: 0 auto 15px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 2.5rem;
+            transition: all 0.5s ease;
+        }
+
+        .heater-section.heating .heater-icon-wrapper {
+            background: linear-gradient(145deg, rgba(239, 68, 68, 0.3) 0%, rgba(239, 68, 68, 0.1) 100%);
+            box-shadow: 0 0 40px rgba(239, 68, 68, 0.4);
+            animation: heaterPulse 1.5s ease-in-out infinite;
+        }
+
+        .heater-section.idle .heater-icon-wrapper {
+            background: rgba(100, 116, 139, 0.15);
+        }
+
+        @keyframes heaterPulse {
+            0%, 100% { box-shadow: 0 0 30px rgba(239, 68, 68, 0.3); }
+            50% { box-shadow: 0 0 50px rgba(239, 68, 68, 0.6); }
+        }
+
+        .heater-label {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 2px;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+
+        .heater-status-text {
+            font-size: 1.1rem;
+            font-weight: 600;
+        }
+
+        .heater-section.heating .heater-status-text {
+            color: var(--danger);
+        }
+
+        .heater-section.idle .heater-status-text {
+            color: var(--text-muted);
+        }
+
+        .heater-gpio {
+            margin-top: 10px;
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            font-family: monospace;
+        }
+
+        /* Footer */
+        .footer { 
+            text-align: center;
+            padding: 25px;
+            background: var(--card-bg);
+            border-radius: 16px;
+            border: 1px solid var(--card-border);
+        }
+
+        .footer-content {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            gap: 30px;
+            flex-wrap: wrap;
+        }
+
+        .footer-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        .footer-item strong {
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .refresh-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            color: var(--accent);
+            font-size: 0.8rem;
+        }
+
+        .refresh-dot {
+            width: 8px;
+            height: 8px;
+            background: var(--accent);
+            border-radius: 50%;
+            animation: blink 1s infinite;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🐠 Smart Aquarium</h1>
+            <p class="header-subtitle">Real-time monitoring dashboard for your aquatic ecosystem</p>
+            <div class="status-container">
+                <span class="status-badge {{ 'online' if data.status == 'Online' else 'offline' }}">
+                    <span class="status-dot {{ 'online' if data.status == 'Online' else 'offline' }}"></span>
+                    System: {{ data.status }}
+                </span>
+                {% if data.global_alert %}
+                <span class="status-badge alert">
+                    ⚠️ Alert Active
+                </span>
+                {% endif %}
+                <span class="device-name">📡 {{ data.device_name }}</span>
+            </div>
+        </header>
+
+        <!-- Smart Thermostat Card -->
+        <section class="thermostat-card">
+            <div class="thermostat-header">
+                <span style="font-size: 2rem;">🌡️</span>
+                <h2>Smart Termostat</h2>
+            </div>
+            <div class="thermostat-content">
+                <!-- Current Temperature -->
+                <div class="current-temp-section {{ 'alert' if data.temp_alert else '' }}">
+                    <div class="current-temp-label">Aktuální teplota</div>
+                    <div class="current-temp-value">
+                        {% if data.temp == -127 %}--{% else %}{{ data.temp }}{% endif %}<span class="current-temp-unit">°C</span>
+                    </div>
+                    {% if data.temp_alert %}
+                    <span class="temp-status-badge warning">⚠️ Mimo rozsah</span>
+                    {% else %}
+                    <span class="temp-status-badge ok">✓ V normě (22-26°C)</span>
+                    {% endif %}
+                </div>
+
+                <!-- Target Temperature Control -->
+                <div class="target-temp-section">
+                    <div class="target-temp-label">🎯 Cílová teplota</div>
+                    <div class="target-temp-display">
+                        <button class="temp-btn" id="tempDown">−</button>
+                        <div class="target-temp-value">
+                            <span id="targetValue">{{ data.target_temp }}</span><span class="unit">°C</span>
+                        </div>
+                        <button class="temp-btn" id="tempUp">+</button>
+                    </div>
+                    <div class="slider-wrapper">
+                        <input type="range" 
+                               id="tempSlider" 
+                               class="temp-slider" 
+                               min="18" 
+                               max="30" 
+                               step="0.5" 
+                               value="{{ data.target_temp }}">
+                        <div class="slider-labels">
+                            <span>🥶 18°C</span>
+                            <span>👌 24°C</span>
+                            <span>🔥 30°C</span>
+                        </div>
+                    </div>
+                    <span id="statusSaved" class="status-saved">✓ Uloženo</span>
+                </div>
+
+                <!-- Heater Status -->
+                <div class="heater-section {{ 'heating' if data.heater_state else 'idle' }}" id="heaterSection">
+                    <div class="heater-icon-wrapper">
+                        {{ '🔥' if data.heater_state else '❄️' }}
+                    </div>
+                    <div class="heater-label">Stav topení</div>
+                    <div class="heater-status-text" id="heaterText">
+                        {{ 'TOPÍ SE' if data.heater_state else 'VYPNUTO' }}
+                    </div>
+                    <div class="heater-gpio">GPIO 26</div>
+                </div>
+            </div>
+        </section>
+
+        <div class="grid">
+            <!-- pH Card -->
+            <div class="card {{ 'alert' if data.ph_alert else '' }}">
+                <div class="card-icon">⚗️</div>
+                <div class="label">Kyselost (pH)</div>
+                <div class="value">{{ "%.1f"|format(data.ph) }}<span class="unit">pH</span></div>
+                {% if data.ph_alert %}
+                <span class="status-text warning">⚠️ Mimo rozsah</span>
+                {% else %}
+                <span class="status-text ok">✓ V normě</span>
+                {% endif %}
+                <div class="range-info">Optimální rozsah: 6.5 - 7.5 pH</div>
+            </div>
+
+            <!-- Turbidity Card -->
+            <div class="card {{ 'alert' if data.turbidity_alert else '' }}">
+                <div class="card-icon">💧</div>
+                <div class="label">Zákal vody</div>
+                <div class="value">{{ data.turbidity }}<span class="unit">RAW</span></div>
+                {% if data.turbidity_alert %}
+                <span class="status-text warning">⚠️ Vysoký zákal</span>
+                {% else %}
+                <span class="status-text ok">✓ Čistá voda</span>
+                {% endif %}
+                <div class="range-info">Maximální hodnota: &lt; 1000</div>
+            </div>
+
+            <!-- TDS Card -->
+            <div class="card {{ 'alert' if data.tds_alert else '' }}">
+                <div class="card-icon">🧪</div>
+                <div class="label">TDS (Rozpuštěné látky)</div>
+                <div class="value">{{ data.tds }}<span class="unit">ppm</span></div>
+                {% if data.tds_alert %}
+                <span class="status-text warning">⚠️ Vysoká hodnota</span>
+                {% else %}
+                <span class="status-text ok">✓ V normě</span>
+                {% endif %}
+                <div class="range-info">Maximální hodnota: &lt; 500 ppm</div>
+            </div>
+
+            <!-- Water Level Card -->
+            <div class="card {{ 'alert' if data.water_level_alert else '' }}">
+                <div class="card-icon">📊</div>
+                <div class="label">Hladina vody</div>
+                <div class="value">{{ data.water_level }}<span class="unit">%</span></div>
+                <div class="water-level-bar">
+                    <div class="water-level-fill {{ 'low' if data.water_level_alert else 'ok' }}" id="water-fill"></div>
+                </div>
+                {% if data.water_level_alert %}
+                <span class="status-text warning">⚠️ Nízká hladina</span>
+                {% else %}
+                <span class="status-text ok">✓ OK</span>
+                {% endif %}
+                <div class="range-info">Minimální hladina: 20%</div>
+            </div>
+
+            <!-- Relay Status Card -->
+            <div class="card">
+                <div class="card-icon">🔌</div>
+                <div class="label">Stav relé</div>
+                
+                <!-- Pump Relay -->
+                <div class="relay-status">
+                    <span class="relay-label">Čerpadlo</span>
+                    <div class="relay-indicator {{ 'on' if data.pump_state else 'off' }}"></div>
+                    <span class="relay-state {{ 'on' if data.pump_state else 'off' }}">
+                        {{ 'Zapnuto' if data.pump_state else 'Vypnuto' }}
+                    </span>
+                </div>
+                
+                <!-- Heater Relay -->
+                <div class="relay-status">
+                    <span class="relay-label">Topení</span>
+                    <div class="relay-indicator {{ 'on' if data.heater_state else 'off' }}"></div>
+                    <span class="relay-state {{ 'on' if data.heater_state else 'off' }}">
+                        {{ 'Zapnuto' if data.heater_state else 'Vypnuto' }}
+                    </span>
+                </div>
+            </div>
+        </div>
+
+        <footer class="footer">
+            <div class="footer-content">
+                <div class="footer-item">
+                    <span>🕐</span>
+                    <strong>Poslední aktualizace:</strong>
+                    <span>{{ data.last_update }}</span>
+                </div>
+                <div class="footer-item">
+                    <span>👨‍🎓</span>
+                    <strong>Projekt:</strong>
+                    <span>SOČ - Elias Forman</span>
+                </div>
+                <div class="refresh-indicator">
+                    <span class="refresh-dot"></span>
+                    Auto-refresh: 5s
+                </div>
+            </div>
+        </footer>
+    </div>
+
+    <script>
+        // Set water level bar width
+        document.getElementById('water-fill').style.width = '{{ data.water_level }}%';
+        
+        // Thermostat control
+        const targetValue = document.getElementById('targetValue');
+        const tempSlider = document.getElementById('tempSlider');
+        const tempUp = document.getElementById('tempUp');
+        const tempDown = document.getElementById('tempDown');
+        const statusSaved = document.getElementById('statusSaved');
+        let currentTarget = parseFloat('{{ data.target_temp }}');
+        let saveTimeout;
+
+        // Update display
+        function updateDisplay() {
+            targetValue.textContent = currentTarget.toFixed(1);
+            tempSlider.value = currentTarget;
+        }
+
+        // +/- buttons
+        tempUp.addEventListener('click', function() {
+            if (currentTarget < 30) {
+                currentTarget = Math.min(30, currentTarget + 0.5);
+                updateDisplay();
+                sendTargetTemp(currentTarget);
+            }
+        });
+
+        tempDown.addEventListener('click', function() {
+            if (currentTarget > 18) {
+                currentTarget = Math.max(18, currentTarget - 0.5);
+                updateDisplay();
+                sendTargetTemp(currentTarget);
+            }
+        });
+
+        // Slider
+        tempSlider.addEventListener('input', function() {
+            currentTarget = parseFloat(this.value);
+            updateDisplay();
+            sendTargetTemp(currentTarget);
+        });
+
+        // Send target temperature to server
+        async function sendTargetTemp(value) {
+            clearTimeout(saveTimeout);
+            
+            saveTimeout = setTimeout(async () => {
+                try {
+                    const response = await fetch('http://192.168.50.212:8000/set_target', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({ target_temp: parseFloat(value) })
+                    });
+                    
+                    if (response.ok) {
+                        statusSaved.classList.add('show');
+                        setTimeout(() => {
+                            statusSaved.classList.remove('show');
+                        }, 2000);
+                    }
+                } catch (error) {
+                    console.error('Error setting target temperature:', error);
+                }
+            }, 300);
+        }
+
+        // Auto-refresh countdown
+        let countdown = 5;
+        const refreshIndicator = document.querySelector('.refresh-indicator');
+        
+        setInterval(() => {
+            countdown--;
+            if (countdown <= 0) countdown = 5;
+        }, 1000);
+    </script>
+</body>
+</html>
