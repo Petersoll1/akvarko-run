@@ -755,8 +755,8 @@
 <body>
     <div class="container">
         <header class="header">
-            <h1>🐠 Smart Aquarium</h1>
-            <p class="header-subtitle">Real-time monitoring dashboard for your aquatic ecosystem</p>
+            <h1>🐠 Chytré Akvárium</h1>
+            <p class="header-subtitle">Dashboard pro SOČ a ročníkovou práci žáků Petr Eliáš a Vít Forman.</p>
             <div class="status-container">
                 <span class="status-badge {{ 'online' if data.status == 'Online' else 'offline' }}">
                     <span class="status-dot {{ 'online' if data.status == 'Online' else 'offline' }}"></span>
@@ -775,7 +775,7 @@
         <section class="thermostat-card">
             <div class="thermostat-header">
                 <span style="font-size: 2rem;">🌡️</span>
-                <h2>Smart Termostat</h2>
+                <h2>Chytrý termostat</h2>
             </div>
             <div class="thermostat-content">
                 <!-- Current Temperature -->
@@ -787,7 +787,7 @@
                     {% if data.temp_alert %}
                     <span class="temp-status-badge warning">⚠️ Mimo rozsah</span>
                     {% else %}
-                    <span class="temp-status-badge ok">✓ V normě (22-26°C)</span>
+                    <span class="temp-status-badge ok">✓ V normě</span>
                     {% endif %}
                 </div>
 
