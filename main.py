@@ -6,7 +6,6 @@ import time
 
 app = FastAPI()
 
-# Povolení CORS (pro jistotu, aby web neblokoval data)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -16,124 +15,142 @@ app.add_middleware(
 
 templates = Jinja2Templates(directory="templates")
 
-# Health check limity
-TEMP_MIN = 22.0
-TEMP_MAX = 26.0
+# --- VÝCHOZÍ NASTAVENÍ ---
+# Tyto hodnoty se použijí po restartu serveru, než ESP pošle první data
+DEFAULT_TARGET_TEMP = 24.0
+
+# Ostatní limity (které se nemění podle teploty)
 PH_MIN = 6.5
 PH_MAX = 7.5
-TURBIDITY_MAX = 1000
-TDS_MAX = 500
-WATER_LEVEL_MIN = 20
+TURBIDITY_LIMIT = 2000 
+TDS_LIMIT = 500
+WATER_LEVEL_MIN = 30 
 
-# Nastavení termostatu
-target_temp = 24.0
-HYSTERESIS = 0.2
+# Hystereze pro topení (0.5 stupně)
+HYSTERESIS = 0.5
+# Hystereze pro ALARM (1.0 stupeň - jak jsi chtěl)
+ALARM_TOLERANCE = 1.0
+
 heater_cmd = False
 
-# Sem se ukládají data
+# --- DATOVÉ ÚLOŽIŠTĚ ---
 current_data = {
     "temp": 0.0,
     "ph": 0.0,
-    "ph_raw": 0,
     "turbidity": 0,
     "tds": 0,
     "water_level": 0,
-    "pump_state": False,
+    "pump_state": True,        # Předpokládáme, že čerpadlo jede
     "heater_state": False,
-    "status": "Offline",
-    "device_name": "Čekám na ESP...",
+    "status": "Čekám...",
+    "device_name": "Neznámé",
     "last_update": "Nikdy",
+    "last_timestamp": 0,
+    "target_temp": DEFAULT_TARGET_TEMP,
+    # Alerty
     "temp_alert": False,
     "ph_alert": False,
     "turbidity_alert": False,
     "tds_alert": False,
     "water_level_alert": False,
-    "global_alert": False,
-    "target_temp": 24.0
+    "global_alert": False
 }
 
-def scale_ph(raw_value: int) -> float:
-    raw_value = max(0, min(4095, raw_value))
-    return round((raw_value / 4095) * 14.0, 2)
-
-def check_health(temp: float, ph: float, turbidity: int, tds: int, water_level: int) -> dict:
-    temp_alert = not (TEMP_MIN <= temp <= TEMP_MAX) if temp != -127 else True
-    ph_alert = not (PH_MIN <= ph <= PH_MAX)
-    turbidity_alert = turbidity >= TURBIDITY_MAX
-    tds_alert = tds > TDS_MAX
-    water_level_alert = water_level < WATER_LEVEL_MIN
+# --- FUNKCE PRO KONTROLU ZDRAVÍ (DOKTOR) ---
+def check_health(data):
+    target = data["target_temp"]
+    temp = data["temp"]
     
-    return {
-        "temp_alert": temp_alert,
-        "ph_alert": ph_alert,
-        "turbidity_alert": turbidity_alert,
-        "tds_alert": tds_alert,
-        "water_level_alert": water_level_alert,
-        "global_alert": temp_alert or ph_alert or turbidity_alert or tds_alert or water_level_alert
-    }
+    # 1. Dynamický Alarm pro Teplotu
+    # Pokud je teplota mimo rozsah (Cíl +/- 1 stupeň), spustí se alarm
+    if temp != -127:
+        temp_is_bad = (temp < (target - ALARM_TOLERANCE)) or (temp > (target + ALARM_TOLERANCE))
+    else:
+        temp_is_bad = True # Senzor odpojen
 
-# --- HLAVNÍ STRÁNKA (VIEW) ---
+    alerts = {
+        "temp_alert": temp_is_bad,
+        "ph_alert": not (PH_MIN <= data["ph"] <= PH_MAX),
+        "turbidity_alert": data["turbidity"] < TURBIDITY_LIMIT,
+        "tds_alert": data["tds"] > TDS_LIMIT,
+        "water_level_alert": data["water_level"] < WATER_LEVEL_MIN
+    }
+    alerts["global_alert"] = any(alerts.values())
+    return alerts
+
 @app.get("/")
 async def dashboard(request: Request):
-    # Tady se vezmou uložená data a pošlou se do index.html
+    global current_data
+    
+    # Offline detekce (20 sekund)
+    time_diff = time.time() - current_data["last_timestamp"]
+    if current_data["last_timestamp"] != 0 and time_diff > 20:
+        current_data["status"] = "Offline 🔴"
+    else:
+        if current_data["last_timestamp"] != 0:
+            current_data["status"] = "Online 🟢"
+
     return templates.TemplateResponse("index.html", {"request": request, "data": current_data})
 
-# --- PŘÍJEM DAT Z ESP32 (LOGIC) ---
-# Tady byla chyba! ESP32 posílá na /api/data, tak to musíme chytat TADY.
 @app.post("/api/data")
 async def receive_data(data: dict):
     global current_data, heater_cmd
     
-    # 1. Rozbalíme data z ESP32
-    temp = data.get("temp", 0.0)
-    ph_raw = data.get("ph", 0)
-    turbidity = data.get("turbidity", 0)
-    tds = data.get("tds", 0)
-    water_level = data.get("water_level", 0)
-    pump_state = data.get("pump_state", False)
-    heater_state = data.get("heater_state", False)
+    current_timestamp = time.time()
+    formatted_time = time.strftime("%H:%M:%S", time.localtime(current_timestamp))
+
+    # Načtení a zaokrouhlení teploty
+    raw_temp = data.get("temp", -127)
+    if raw_temp != -127:
+        temp = round(float(raw_temp), 1) # Zaokrouhlení na 1 desetinné místo
+    else:
+        temp = -127
+
+    # Logika Termostatu (Ovládání topení)
+    # Topíme, jen když teplota klesne pod (Cíl - 0.5)
+    target = current_data["target_temp"]
     
-    # 2. Přepočítáme pH
-    ph_scaled = scale_ph(ph_raw)
-    
-    # 3. Zkontrolujeme zdraví akvária
-    health = check_health(temp, ph_scaled, turbidity, tds, water_level)
-    
-    # 4. Logika termostatu
     if temp != -127:
-        if temp < (target_temp - HYSTERESIS):
-            heater_cmd = True
-        elif temp > (target_temp + HYSTERESIS):
-            heater_cmd = False
+        if temp < (target - HYSTERESIS):
+            heater_cmd = True  # Zapnout topení
+        elif temp > target:
+            heater_cmd = False # Vypnout, až dosáhneme cíle
+            # (Tím se zajistí, že to nebude cvakat sem a tam)
     
-    # 5. ULOŽÍME DATA (aby je viděl web)
     current_data.update({
         "temp": temp,
-        "ph": ph_scaled,
-        "ph_raw": ph_raw,
-        "turbidity": turbidity,
-        "tds": tds,
-        "water_level": water_level,
-        "pump_state": pump_state,
-        "heater_state": heater_state,
-        "status": "Online",  # Teď už víme, že je online!
-        "device_name": data.get("device_name", "ESP32 Akvárko"),
-        "last_update": time.strftime("%d.%m.%Y %H:%M:%S"),
-        "target_temp": target_temp,
-        **health
+        "ph": data.get("ph", 0),
+        "turbidity": data.get("turbidity", 0),
+        "tds": data.get("tds", 0),
+        "water_level": data.get("water_level", 0),
+        "pump_state": data.get("pump_state", True),
+        "heater_state": data.get("heater_state", False),
+        "device_name": data.get("device_name", "ESP32"),
+        "status": "Online 🟢",
+        "last_update": formatted_time,
+        "last_timestamp": current_timestamp,
+        # target_temp neměníme, zůstává nastavená uživatelem
     })
     
-    print(f"✅ Data uložena! Teplota: {temp}°C | pH: {ph_scaled}")
+    alerts = check_health(current_data)
+    current_data.update(alerts)
     
-    # Odpovíme ESPčku, jestli má topit
-    return {"message": "Data saved", "heater_cmd": heater_cmd, "target_temp": target_temp}
+    print(f"✅ Data: {temp}°C (Cíl: {target}°C) | Topení: {heater_cmd}")
+    
+    return {"message": "Data saved", "heater_cmd": heater_cmd}
 
-# --- NASTAVENÍ CÍLOVÉ TEPLOTY Z WEBU ---
 @app.post("/set_target")
 async def set_target(data: dict):
-    global target_temp, current_data
-    new_target = data.get("target_temp", 24.0)
-    target_temp = max(18.0, min(30.0, float(new_target)))
-    current_data["target_temp"] = target_temp
-    print(f"🎯 Cílová teplota změněna na: {target_temp}°C")
-    return {"message": "Target updated", "target_temp": target_temp}
+    global current_data
+    try:
+        # Uživatel změnil cílovou teplotu na webu
+        new_target = float(data.get("target_temp", 24.0))
+        current_data["target_temp"] = new_target
+        
+        # Hned přepočítáme alerty s novou cílovou teplotou
+        alerts = check_health(current_data)
+        current_data.update(alerts)
+        
+        return {"status": "ok", "target": new_target}
+    except:
+        return {"status": "error"}
