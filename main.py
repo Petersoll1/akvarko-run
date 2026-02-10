@@ -5,8 +5,42 @@ from fastapi.middleware.cors import CORSMiddleware
 from collections import deque
 import statistics
 import time
+import json
+import os
 
 app = FastAPI()
+
+# --- PERSISTENCE NASTAVENÍ (přežije restart Render) ---
+SETTINGS_FILE = "settings.json"
+
+def load_settings():
+    """Načte nastavení ze souboru, pokud existuje."""
+    try:
+        if os.path.exists(SETTINGS_FILE):
+            with open(SETTINGS_FILE, "r") as f:
+                data = json.load(f)
+                print(f"✅ Načteno nastavení: teplota={data.get('target_temp')}°C, objem={data.get('tank_volume')}l")
+                return data
+    except Exception as e:
+        print(f"⚠️ Chyba při načítání nastavení: {e}")
+    return None
+
+def save_settings(target_temp, tank_volume):
+    """Uloží nastavení do souboru."""
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump({"target_temp": target_temp, "tank_volume": tank_volume}, f)
+        print(f"💾 Uloženo: teplota={target_temp}°C, objem={tank_volume}l")
+    except Exception as e:
+        print(f"❌ Chyba při ukládání nastavení: {e}")
+
+def sync_settings_from_file():
+    """Synchronizuje nastavení ze souboru do current_data (pro multi-worker prostředí)."""
+    global current_data
+    saved = load_settings()
+    if saved:
+        current_data["target_temp"] = saved.get("target_temp", current_data["target_temp"])
+        current_data["tank_volume"] = saved.get("tank_volume", current_data["tank_volume"])
 
 app.add_middleware(
     CORSMiddleware,
@@ -21,6 +55,12 @@ templates = Jinja2Templates(directory="templates")
 # Tyto hodnoty se použijí po restartu serveru, než ESP pošle první data
 DEFAULT_TARGET_TEMP = 24.0
 DEFAULT_TANK_VOLUME = 50  # Výchozí objem akvária v litrech
+
+# Načtení uložených nastavení (přežije restart Render)
+_saved = load_settings()
+if _saved:
+    DEFAULT_TARGET_TEMP = _saved.get("target_temp", DEFAULT_TARGET_TEMP)
+    DEFAULT_TANK_VOLUME = _saved.get("tank_volume", DEFAULT_TANK_VOLUME)
 
 # Limity kvality vody (vědecky přesné hodnoty dle požadavků práce)
 PH_MIN = 6.0
@@ -285,6 +325,9 @@ def check_health(data):
 async def dashboard(request: Request):
     global current_data
     
+    # Synchronizace nastavení ze souboru (pro multi-worker prostředí na Render)
+    sync_settings_from_file()
+    
     # Offline detekce (20 sekund)
     time_diff = time.time() - current_data["last_timestamp"]
     if current_data["last_timestamp"] != 0 and time_diff > 20:
@@ -326,6 +369,9 @@ async def update_settings(data: dict):
             current_data["tank_volume"] = max(1, new_volume)
             print(f"🐠 Nový objem akvária: {current_data['tank_volume']} l")
         
+        # Uložení do souboru (přežije restart Render)
+        save_settings(current_data["target_temp"], current_data["tank_volume"])
+        
         # Přepočítáme alerty a doporučení
         alerts = check_health(current_data)
         current_data.update(alerts)
@@ -346,6 +392,9 @@ async def update_settings(data: dict):
 @app.post("/api/data")
 async def receive_data(data: dict):
     global current_data, heater_cmd, history, last_history_save
+    
+    # Synchronizace nastavení ze souboru (pro multi-worker prostředí na Render)
+    sync_settings_from_file()
     
     current_timestamp = time.time()
     formatted_time = time.strftime("%H:%M:%S", time.localtime(current_timestamp))
@@ -467,6 +516,9 @@ async def set_target(data: dict):
             new_volume = int(data.get("tank_volume", 50))
             current_data["tank_volume"] = max(1, new_volume)  # Minimálně 1 litr
             print(f"🐠 [set_target] Nový objem akvária: {current_data['tank_volume']} l")
+        
+        # Uložení do souboru (přežije restart Render)
+        save_settings(current_data["target_temp"], current_data["tank_volume"])
         
         # Hned přepočítáme alerty s novou cílovou teplotou
         alerts = check_health(current_data)
