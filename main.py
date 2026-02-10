@@ -6,8 +6,7 @@ from collections import deque
 import statistics
 import time
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
+import psycopg
 
 app = FastAPI()
 
@@ -20,7 +19,7 @@ def get_db_connection():
         print("⚠️ DATABASE_URL není nastavena - používám výchozí hodnoty")
         return None
     try:
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = psycopg.connect(DATABASE_URL)
         return conn
     except Exception as e:
         print(f"❌ Chyba připojení k DB: {e}")
