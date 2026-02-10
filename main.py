@@ -471,78 +471,58 @@ async def receive_data(data: dict):
 
     # --- VÝPOČET pH Z RAW ADC HODNOTY ---
     raw_ph = data.get("ph", 0)
-    # ESP32 posílá průměr z 10 čtení (RAW ADC 0-4095)
-    
-    # Pokud senzor posílá rozumné hodnoty (100-4000), přepočítáme
-    # Jinak použijeme výchozí hodnotu pro demo
-    if 100 < raw_ph < 4000:
-        # Mapování: RAW 1500-3000 = pH 6-8 (typický rozsah pro akvárium)
-        # Lineární interpolace
-        ph_value = 6.0 + (raw_ph - 1500) / 750.0  # 1500=pH6, 3000=pH8
-        ph_value = round(max(0, min(14, ph_value)), 1)
-    else:
-        # Senzor není připojený nebo dává nesmyslné hodnoty - použij demo hodnotu
-        ph_value = 7.2  # Neutrální pH pro demo
-        print(f"⚠️ pH senzor: RAW={raw_ph} mimo rozsah, použita demo hodnota {ph_value}")
+    # ESP32 ADC: 12-bit (0-4095), napětí 0-3.3V
+    voltage_ph = (raw_ph / 4095.0) * 3.3
+    # pH senzor: typicky 2.5V = pH 7.0, změna cca 0.0592V/pH při 25°C (Nernstova rovnice)
+    # Pro analogový modul: lineární mapování V -> pH
+    # Kalibrační body: 2.5V = pH 7.0, 3.0V = pH 4.0, 2.0V = pH 10.0 (běžná kalibrace)
+    ph_value = 7.0 + (2.5 - voltage_ph) / 0.18  # 0.18V na jednotku pH (empirická hodnota)
+    ph_value = round(max(4, min(10, ph_value)), 1)  # Omezení na realistický rozsah 4-10
+    print(f"📊 pH: RAW={raw_ph}, Voltage={voltage_ph:.2f}V, pH={ph_value}")
 
-    # --- VÝPOČET TDS S TEPLOTNÍ KOMPENZACÍ ---
+    # --- VÝPOČET TDS ---
     raw_tds = data.get("tds", 0)
-    # Použít aktuální teplotu, nebo 25°C pokud není validní
-    temp_for_comp = temp if temp != -127 else 25.0
-    
-    # Pokud senzor posílá rozumné hodnoty, přepočítáme
-    if 50 < raw_tds < 4000:
-        # Převod RAW hodnoty na napětí (ESP32 ADC: 12-bit = 4095, napájení 3.3V)
-        v_tds = (raw_tds / 4095.0) * 3.3
-        
-        # Teplotní kompenzační koeficient
-        k = 1.0 + 0.02 * (temp_for_comp - 25.0)
-        
-        # Kompenzované napětí
-        v_comp = v_tds / k
-        
-        # Výpočet TDS v PPM (standardní vzorec pro TDS sondy)
-        tds_value = (133.42 * (v_comp ** 3) - 255.86 * (v_comp ** 2) + 857.39 * v_comp) * 0.5
-        tds_value = int(max(0, min(2000, tds_value)))  # Omezení na rozumný rozsah
+    # ESP32 ADC: 12-bit (0-4095), napětí 0-3.3V
+    voltage_tds = (raw_tds / 4095.0) * 3.3
+    # TDS senzor: nelineární charakteristika
+    # Vzorec pro TDS modul: TDS = (133.42*V³ - 255.86*V² + 857.39*V) * kompenzace
+    # Kompenzace pro 25°C = 1.0
+    if voltage_tds < 0.01:
+        tds_value = 0
     else:
-        # Senzor není připojený - použij demo hodnotu
-        tds_value = 180  # Typická hodnota pro akvárium
-        print(f"⚠️ TDS senzor: RAW={raw_tds} mimo rozsah, použita demo hodnota {tds_value}")
+        tds_value = int(133.42 * pow(voltage_tds, 3) - 255.86 * pow(voltage_tds, 2) + 857.39 * voltage_tds)
+    tds_value = max(0, min(1000, tds_value))  # Omezení na 0-1000 PPM
+    print(f"📊 TDS: RAW={raw_tds}, Voltage={voltage_tds:.2f}V, TDS={tds_value} PPM")
 
-    # --- VÝPOČET ZÁKALU (TURBIDITY) - PŘEVOD RAW NA NTU ---
+    # --- VÝPOČET ZÁKALU (TURBIDITY) ---
     raw_turbidity = data.get("turbidity", 0)
-    
-    # Pokud senzor posílá rozumné hodnoty, přepočítáme
-    if 100 < raw_turbidity < 4000:
-        # Převod RAW hodnoty na napětí
-        v_turb = (raw_turbidity / 4095.0) * 3.3
-        
-        # Turbidity senzor: vyšší napětí = čistší voda
-        if v_turb >= 3.0:
-            ntu_value = 0  # Velmi čistá voda
-        elif v_turb <= 1.0:
-            ntu_value = 500  # Zakalená voda (omezeno na rozumnou hodnotu)
-        else:
-            # Lineární interpolace mezi 1.0V (500 NTU) a 3.0V (0 NTU)
-            ntu_value = int(500 * (3.0 - v_turb) / 2.0)
-        
-        ntu_value = max(0, min(3000, ntu_value))
+    # ESP32 ADC: 12-bit (0-4095), napětí 0-3.3V
+    voltage_turb = (raw_turbidity / 4095.0) * 3.3
+    # Turbidity senzor: typicky 4.2V = čistá voda (0 NTU), klesá s kalností
+    # Pro 3.3V max: 3.3V = čistá, 0V = velmi kalná
+    # Empirický vzorec: NTU = -1120.4 * V² + 5742.3 * V - 4352.9 (pro vysoké napětí)
+    # Zjednodušený lineární vzorec pro 0-3.3V: 
+    # 3.0V+ = 0-10 NTU (čistá), 2.5V = ~30 NTU, 2.0V = ~100 NTU
+    if voltage_turb >= 3.0:
+        ntu_value = int((3.3 - voltage_turb) * 33)  # 0-10 NTU
+    elif voltage_turb >= 2.0:
+        ntu_value = int(10 + (3.0 - voltage_turb) * 90)  # 10-100 NTU
     else:
-        # Senzor není připojený - použij demo hodnotu
-        ntu_value = 15  # Mírně zakalená voda (OK pro akvárium)
-        print(f"⚠️ Turbidity senzor: RAW={raw_turbidity} mimo rozsah, použita demo hodnota {ntu_value}")
+        ntu_value = int(100 + (2.0 - voltage_turb) * 200)  # 100-500+ NTU (velmi kalná)
+    ntu_value = max(0, min(500, ntu_value))  # Omezení na 0-500 NTU
+    print(f"📊 Turbidity: RAW={raw_turbidity}, Voltage={voltage_turb:.2f}V, NTU={ntu_value}")
 
     # Logika Termostatu (Ovládání topení)
-    # Topíme, jen když teplota klesne pod (Cíl - 0.5)
     target = current_data["target_temp"]
-    print(f"🌡️ Termostat: aktuální={temp}°C, cíl={target}°C (z DB), hystereze={HYSTERESIS}")
+    print(f"🌡️ Termostat: aktuální={temp}°C, cíl={target}°C")
     
     if temp != -127:
-        if temp < (target - HYSTERESIS):
-            heater_cmd = True  # Zapnout topení
-        elif temp > target:
-            heater_cmd = False  # Vypnout, až dosáhneme cíle
-            # (Tím se zajistí, že to nebude cvakat sem a tam)
+        if temp < target:
+            heater_cmd = True  # Zapnout topení - je pod cílem
+            print(f"🔥 Topení ZAPNUTO (temp {temp} < cíl {target})")
+        else:
+            heater_cmd = False  # Vypnout - dosáhli jsme cíle
+            print(f"❄️ Topení VYPNUTO (temp {temp} >= cíl {target})")
     
     current_data.update({
         "temp": temp,
