@@ -295,6 +295,54 @@ async def dashboard(request: Request):
 
     return templates.TemplateResponse("index.html", {"request": request, "data": current_data})
 
+
+# --- API PRO NASTAVENÍ (GET/POST) ---
+@app.get("/api/settings")
+async def get_settings():
+    """Vrací aktuální nastavení pro frontend nebo jiné klienty."""
+    global current_data
+    return {
+        "target_temp": current_data["target_temp"],
+        "tank_volume": current_data["tank_volume"],
+        "heater_cmd": heater_cmd
+    }
+
+
+@app.post("/api/settings")
+async def update_settings(data: dict):
+    """Aktualizuje nastavení z frontendu. Změny jsou okamžitě platné."""
+    global current_data, heater_cmd
+    
+    try:
+        # Aktualizace cílové teploty
+        if "target_temp" in data:
+            new_target = float(data["target_temp"])
+            current_data["target_temp"] = new_target
+            print(f"🎯 Nová cílová teplota: {new_target}°C")
+        
+        # Aktualizace objemu akvária
+        if "tank_volume" in data:
+            new_volume = int(data["tank_volume"])
+            current_data["tank_volume"] = max(1, new_volume)
+            print(f"🐠 Nový objem akvária: {current_data['tank_volume']} l")
+        
+        # Přepočítáme alerty a doporučení
+        alerts = check_health(current_data)
+        current_data.update(alerts)
+        
+        advice = generate_advice(current_data, current_data["tank_volume"])
+        current_data["advice"] = advice
+        
+        return {
+            "status": "ok",
+            "target_temp": current_data["target_temp"],
+            "tank_volume": current_data["tank_volume"],
+            "heater_cmd": heater_cmd
+        }
+    except Exception as e:
+        print(f"❌ Chyba při aktualizaci nastavení: {e}")
+        return {"status": "error", "message": str(e)}
+
 @app.post("/api/data")
 async def receive_data(data: dict):
     global current_data, heater_cmd, history, last_history_save
@@ -406,17 +454,19 @@ async def receive_data(data: dict):
 
 @app.post("/set_target")
 async def set_target(data: dict):
-    global current_data
+    global current_data, heater_cmd
     try:
         # Uživatel změnil cílovou teplotu na webu
         if "target_temp" in data:
             new_target = float(data.get("target_temp", 24.0))
             current_data["target_temp"] = new_target
+            print(f"🎯 [set_target] Nová cílová teplota: {new_target}°C")
         
         # Uživatel změnil objem akvária
         if "tank_volume" in data:
             new_volume = int(data.get("tank_volume", 50))
             current_data["tank_volume"] = max(1, new_volume)  # Minimálně 1 litr
+            print(f"🐠 [set_target] Nový objem akvária: {current_data['tank_volume']} l")
         
         # Hned přepočítáme alerty s novou cílovou teplotou
         alerts = check_health(current_data)
@@ -429,7 +479,9 @@ async def set_target(data: dict):
         return {
             "status": "ok", 
             "target": current_data["target_temp"],
-            "volume": current_data["tank_volume"]
+            "volume": current_data["tank_volume"],
+            "heater_cmd": heater_cmd
         }
-    except:
-        return {"status": "error"}
+    except Exception as e:
+        print(f"❌ Chyba v set_target: {e}")
+        return {"status": "error", "message": str(e)}
