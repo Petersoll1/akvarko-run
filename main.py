@@ -473,10 +473,10 @@ async def receive_data(data: dict):
     raw_ph = data.get("ph", 0)
     # ESP32 ADC: 12-bit (0-4095), napětí 0-3.3V
     voltage_ph = (raw_ph / 4095.0) * 3.3
-    # pH senzor: typicky 2.5V = pH 7.0, změna cca 0.0592V/pH při 25°C (Nernstova rovnice)
-    # Pro analogový modul: lineární mapování V -> pH
-    # Kalibrační body: 2.5V = pH 7.0, 3.0V = pH 4.0, 2.0V = pH 10.0 (běžná kalibrace)
-    ph_value = 7.0 + (2.5 - voltage_ph) / 0.18  # 0.18V na jednotku pH (empirická hodnota)
+    # pH senzor s opačnou polaritou: vyšší napětí = vyšší pH
+    # Kalibrační body: 1.5V = pH 4.0, 2.0V = pH 7.0, 2.5V = pH 10.0
+    # Lineární mapování: pH = 4 + (voltage - 1.5) * 6
+    ph_value = 4.0 + (voltage_ph - 1.5) * 6.0
     ph_value = round(max(4, min(10, ph_value)), 1)  # Omezení na realistický rozsah 4-10
     print(f"📊 pH: RAW={raw_ph}, Voltage={voltage_ph:.2f}V, pH={ph_value}")
 
