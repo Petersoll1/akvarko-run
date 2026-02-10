@@ -5,42 +5,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from collections import deque
 import statistics
 import time
-import json
-import os
 
 app = FastAPI()
 
-# --- PERSISTENCE NASTAVENÍ (přežije restart Render) ---
-SETTINGS_FILE = "settings.json"
-
-def load_settings():
-    """Načte nastavení ze souboru, pokud existuje."""
-    try:
-        if os.path.exists(SETTINGS_FILE):
-            with open(SETTINGS_FILE, "r") as f:
-                data = json.load(f)
-                print(f"✅ Načteno nastavení: teplota={data.get('target_temp')}°C, objem={data.get('tank_volume')}l")
-                return data
-    except Exception as e:
-        print(f"⚠️ Chyba při načítání nastavení: {e}")
-    return None
-
-def save_settings(target_temp, tank_volume):
-    """Uloží nastavení do souboru."""
-    try:
-        with open(SETTINGS_FILE, "w") as f:
-            json.dump({"target_temp": target_temp, "tank_volume": tank_volume}, f)
-        print(f"💾 Uloženo: teplota={target_temp}°C, objem={tank_volume}l")
-    except Exception as e:
-        print(f"❌ Chyba při ukládání nastavení: {e}")
-
-def sync_settings_from_file():
-    """Synchronizuje nastavení ze souboru do current_data (pro multi-worker prostředí)."""
-    global current_data
-    saved = load_settings()
-    if saved:
-        current_data["target_temp"] = saved.get("target_temp", current_data["target_temp"])
-        current_data["tank_volume"] = saved.get("tank_volume", current_data["tank_volume"])
+# --- GLOBÁLNÍ NASTAVENÍ (přežije po dobu běhu serveru) ---
+# Tyto hodnoty se používají pro termostat a zobrazování
+SETTINGS = {
+    "target_temp": 24.0,
+    "tank_volume": 50
+}
 
 app.add_middleware(
     CORSMiddleware,
@@ -50,17 +23,6 @@ app.add_middleware(
 )
 
 templates = Jinja2Templates(directory="templates")
-
-# --- VÝCHOZÍ NASTAVENÍ ---
-# Tyto hodnoty se použijí po restartu serveru, než ESP pošle první data
-DEFAULT_TARGET_TEMP = 24.0
-DEFAULT_TANK_VOLUME = 50  # Výchozí objem akvária v litrech
-
-# Načtení uložených nastavení (přežije restart Render)
-_saved = load_settings()
-if _saved:
-    DEFAULT_TARGET_TEMP = _saved.get("target_temp", DEFAULT_TARGET_TEMP)
-    DEFAULT_TANK_VOLUME = _saved.get("tank_volume", DEFAULT_TANK_VOLUME)
 
 # Limity kvality vody (vědecky přesné hodnoty dle požadavků práce)
 PH_MIN = 6.0
@@ -94,8 +56,8 @@ current_data = {
     "device_name": "Neznámé",
     "last_update": "Nikdy",
     "last_timestamp": 0,
-    "target_temp": DEFAULT_TARGET_TEMP,
-    "tank_volume": DEFAULT_TANK_VOLUME,  # Objem akvária v litrech
+    "target_temp": SETTINGS["target_temp"],
+    "tank_volume": SETTINGS["tank_volume"],
     # Alerty
     "temp_alert": False,
     "ph_alert": False,
@@ -323,10 +285,11 @@ def check_health(data):
 
 @app.get("/")
 async def dashboard(request: Request):
-    global current_data
+    global current_data, SETTINGS
     
-    # Synchronizace nastavení ze souboru (pro multi-worker prostředí na Render)
-    sync_settings_from_file()
+    # Použij nastavení z SETTINGS (globální slovník)
+    current_data["target_temp"] = SETTINGS["target_temp"]
+    current_data["tank_volume"] = SETTINGS["tank_volume"]
     
     # Offline detekce (20 sekund)
     time_diff = time.time() - current_data["last_timestamp"]
@@ -343,10 +306,10 @@ async def dashboard(request: Request):
 @app.get("/api/settings")
 async def get_settings():
     """Vrací aktuální nastavení pro frontend nebo jiné klienty."""
-    global current_data
+    global SETTINGS, heater_cmd
     return {
-        "target_temp": current_data["target_temp"],
-        "tank_volume": current_data["tank_volume"],
+        "target_temp": SETTINGS["target_temp"],
+        "tank_volume": SETTINGS["tank_volume"],
         "heater_cmd": heater_cmd
     }
 
@@ -354,35 +317,34 @@ async def get_settings():
 @app.post("/api/settings")
 async def update_settings(data: dict):
     """Aktualizuje nastavení z frontendu. Změny jsou okamžitě platné."""
-    global current_data, heater_cmd
+    global SETTINGS, current_data, heater_cmd
     
     try:
         # Aktualizace cílové teploty
         if "target_temp" in data:
             new_target = float(data["target_temp"])
+            SETTINGS["target_temp"] = new_target
             current_data["target_temp"] = new_target
             print(f"🎯 Nová cílová teplota: {new_target}°C")
         
         # Aktualizace objemu akvária
         if "tank_volume" in data:
-            new_volume = int(data["tank_volume"])
-            current_data["tank_volume"] = max(1, new_volume)
-            print(f"🐠 Nový objem akvária: {current_data['tank_volume']} l")
-        
-        # Uložení do souboru (přežije restart Render)
-        save_settings(current_data["target_temp"], current_data["tank_volume"])
+            new_volume = max(1, int(data["tank_volume"]))
+            SETTINGS["tank_volume"] = new_volume
+            current_data["tank_volume"] = new_volume
+            print(f"🐠 Nový objem akvária: {new_volume} l")
         
         # Přepočítáme alerty a doporučení
         alerts = check_health(current_data)
         current_data.update(alerts)
         
-        advice = generate_advice(current_data, current_data["tank_volume"])
+        advice = generate_advice(current_data, SETTINGS["tank_volume"])
         current_data["advice"] = advice
         
         return {
             "status": "ok",
-            "target_temp": current_data["target_temp"],
-            "tank_volume": current_data["tank_volume"],
+            "target_temp": SETTINGS["target_temp"],
+            "tank_volume": SETTINGS["tank_volume"],
             "heater_cmd": heater_cmd
         }
     except Exception as e:
@@ -391,10 +353,11 @@ async def update_settings(data: dict):
 
 @app.post("/api/data")
 async def receive_data(data: dict):
-    global current_data, heater_cmd, history, last_history_save
+    global current_data, heater_cmd, history, last_history_save, SETTINGS
     
-    # Synchronizace nastavení ze souboru (pro multi-worker prostředí na Render)
-    sync_settings_from_file()
+    # Použij nastavení z SETTINGS (globální slovník)
+    current_data["target_temp"] = SETTINGS["target_temp"]
+    current_data["tank_volume"] = SETTINGS["tank_volume"]
     
     current_timestamp = time.time()
     formatted_time = time.strftime("%H:%M:%S", time.localtime(current_timestamp))
@@ -411,10 +374,17 @@ async def receive_data(data: dict):
     # ESP32 posílá průměr z 10 čtení (RAW ADC 0-4095)
     # Převod na napětí (3.3V reference)
     v_ph = (raw_ph / 4095.0) * 3.3
-    # Lineární převod napětí na pH (kalibrováno pro typické pH sondy)
-    # pH 7 = cca 2.5V, pH 4 = cca 3.0V, pH 10 = cca 2.0V
-    # Vzorec: pH = 7 + (2.5 - napětí) * 3.5
-    ph_value = 7.0 + (2.5 - v_ph) * 3.5
+    
+    # Pro senzory které posílají vyšší napětí = kyselejší (nižší pH)
+    # RAW 0 = 0V = pH 14 (zásadité), RAW 4095 = 3.3V = pH 0 (kyselé)
+    # Lineární mapování: pH = 14 - (napětí / 3.3) * 14
+    # NEBO pro standardní pH sondy kde 2.5V = pH 7:
+    # pH = 7.0 + (2.5 - napětí) * 3.5
+    
+    # Jednodušší přístup - přímé mapování RAW na pH
+    # RAW 0 = pH 0, RAW 4095 = pH 14 (nebo naopak podle senzoru)
+    # Vyzkoušíme: RAW 3000 by mělo být cca pH 7
+    ph_value = 14.0 - (raw_ph / 4095.0) * 14.0
     ph_value = round(max(0, min(14, ph_value)), 1)  # Omezení na 0-14
 
     # --- VÝPOČET TDS S TEPLOTNÍ KOMPENZACÍ ---
@@ -520,35 +490,36 @@ async def receive_data(data: dict):
 
 @app.post("/set_target")
 async def set_target(data: dict):
-    global current_data, heater_cmd
+    global SETTINGS, current_data, heater_cmd
     try:
         # Uživatel změnil cílovou teplotu na webu
         if "target_temp" in data:
             new_target = float(data.get("target_temp", 24.0))
+            SETTINGS["target_temp"] = new_target
             current_data["target_temp"] = new_target
-            print(f"🎯 [set_target] Nová cílová teplota: {new_target}°C")
+            print(f"🎯 [set_target] Nová cílová teplota: {new_target}°C (SETTINGS aktualizováno)")
         
         # Uživatel změnil objem akvária
         if "tank_volume" in data:
-            new_volume = int(data.get("tank_volume", 50))
-            current_data["tank_volume"] = max(1, new_volume)  # Minimálně 1 litr
-            print(f"🐠 [set_target] Nový objem akvária: {current_data['tank_volume']} l")
-        
-        # Uložení do souboru (přežije restart Render)
-        save_settings(current_data["target_temp"], current_data["tank_volume"])
+            new_volume = max(1, int(data.get("tank_volume", 50)))
+            SETTINGS["tank_volume"] = new_volume
+            current_data["tank_volume"] = new_volume
+            print(f"🐠 [set_target] Nový objem akvária: {new_volume} l (SETTINGS aktualizováno)")
         
         # Hned přepočítáme alerty s novou cílovou teplotou
         alerts = check_health(current_data)
         current_data.update(alerts)
         
         # Přegenerujeme doporučení
-        advice = generate_advice(current_data, current_data["tank_volume"])
+        advice = generate_advice(current_data, SETTINGS["tank_volume"])
         current_data["advice"] = advice
+        
+        print(f"📊 SETTINGS stav: target_temp={SETTINGS['target_temp']}, tank_volume={SETTINGS['tank_volume']}")
         
         return {
             "status": "ok", 
-            "target": current_data["target_temp"],
-            "volume": current_data["tank_volume"],
+            "target": SETTINGS["target_temp"],
+            "volume": SETTINGS["tank_volume"],
             "heater_cmd": heater_cmd
         }
     except Exception as e:
