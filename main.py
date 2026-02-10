@@ -339,11 +339,14 @@ def check_health(data):
 
 @app.get("/")
 async def dashboard(request: Request):
-    global current_data, SETTINGS
+    global current_data
     
-    # Použij nastavení z SETTINGS (globální slovník)
-    current_data["target_temp"] = SETTINGS["target_temp"]
-    current_data["tank_volume"] = SETTINGS["tank_volume"]
+    # VŽDY načíst z databáze (pro multi-worker prostředí)
+    db_target = get_setting("target_temp", 24.0)
+    db_volume = int(get_setting("tank_volume", 50))
+    current_data["target_temp"] = db_target
+    current_data["tank_volume"] = db_volume
+    print(f"📄 Dashboard: target_temp={db_target}°C z DB")
     
     # Offline detekce (20 sekund)
     time_diff = time.time() - current_data["last_timestamp"]
@@ -412,11 +415,13 @@ async def update_settings(data: dict):
 
 @app.post("/api/data")
 async def receive_data(data: dict):
-    global current_data, heater_cmd, history, last_history_save, SETTINGS
+    global current_data, heater_cmd, history, last_history_save
     
-    # Použij nastavení z SETTINGS (globální slovník)
-    current_data["target_temp"] = SETTINGS["target_temp"]
-    current_data["tank_volume"] = SETTINGS["tank_volume"]
+    # VŽDY načíst z databáze (pro multi-worker prostředí)
+    db_target = get_setting("target_temp", 24.0)
+    db_volume = int(get_setting("tank_volume", 50))
+    current_data["target_temp"] = db_target
+    current_data["tank_volume"] = db_volume
     
     current_timestamp = time.time()
     formatted_time = time.strftime("%H:%M:%S", time.localtime(current_timestamp))
@@ -431,62 +436,70 @@ async def receive_data(data: dict):
     # --- VÝPOČET pH Z RAW ADC HODNOTY ---
     raw_ph = data.get("ph", 0)
     # ESP32 posílá průměr z 10 čtení (RAW ADC 0-4095)
-    # Převod na napětí (3.3V reference)
-    v_ph = (raw_ph / 4095.0) * 3.3
     
-    # Pro senzory které posílají vyšší napětí = kyselejší (nižší pH)
-    # RAW 0 = 0V = pH 14 (zásadité), RAW 4095 = 3.3V = pH 0 (kyselé)
-    # Lineární mapování: pH = 14 - (napětí / 3.3) * 14
-    # NEBO pro standardní pH sondy kde 2.5V = pH 7:
-    # pH = 7.0 + (2.5 - napětí) * 3.5
-    
-    # Jednodušší přístup - přímé mapování RAW na pH
-    # RAW 0 = pH 0, RAW 4095 = pH 14 (nebo naopak podle senzoru)
-    # Vyzkoušíme: RAW 3000 by mělo být cca pH 7
-    ph_value = 14.0 - (raw_ph / 4095.0) * 14.0
-    ph_value = round(max(0, min(14, ph_value)), 1)  # Omezení na 0-14
+    # Pokud senzor posílá rozumné hodnoty (100-4000), přepočítáme
+    # Jinak použijeme výchozí hodnotu pro demo
+    if 100 < raw_ph < 4000:
+        # Mapování: RAW 1500-3000 = pH 6-8 (typický rozsah pro akvárium)
+        # Lineární interpolace
+        ph_value = 6.0 + (raw_ph - 1500) / 750.0  # 1500=pH6, 3000=pH8
+        ph_value = round(max(0, min(14, ph_value)), 1)
+    else:
+        # Senzor není připojený nebo dává nesmyslné hodnoty - použij demo hodnotu
+        ph_value = 7.2  # Neutrální pH pro demo
+        print(f"⚠️ pH senzor: RAW={raw_ph} mimo rozsah, použita demo hodnota {ph_value}")
 
     # --- VÝPOČET TDS S TEPLOTNÍ KOMPENZACÍ ---
     raw_tds = data.get("tds", 0)
     # Použít aktuální teplotu, nebo 25°C pokud není validní
     temp_for_comp = temp if temp != -127 else 25.0
     
-    # Převod RAW hodnoty na napětí (ESP32 ADC: 12-bit = 4095, napájení 3.3V)
-    v_tds = (raw_tds / 4095.0) * 3.3
-    
-    # Teplotní kompenzační koeficient
-    k = 1.0 + 0.02 * (temp_for_comp - 25.0)
-    
-    # Kompenzované napětí
-    v_comp = v_tds / k
-    
-    # Výpočet TDS v PPM (standardní vzorec pro TDS sondy)
-    tds_value = (133.42 * (v_comp ** 3) - 255.86 * (v_comp ** 2) + 857.39 * v_comp) * 0.5
-    tds_value = int(max(0, tds_value))  # Zaokrouhlení a omezení na kladné hodnoty
+    # Pokud senzor posílá rozumné hodnoty, přepočítáme
+    if 50 < raw_tds < 4000:
+        # Převod RAW hodnoty na napětí (ESP32 ADC: 12-bit = 4095, napájení 3.3V)
+        v_tds = (raw_tds / 4095.0) * 3.3
+        
+        # Teplotní kompenzační koeficient
+        k = 1.0 + 0.02 * (temp_for_comp - 25.0)
+        
+        # Kompenzované napětí
+        v_comp = v_tds / k
+        
+        # Výpočet TDS v PPM (standardní vzorec pro TDS sondy)
+        tds_value = (133.42 * (v_comp ** 3) - 255.86 * (v_comp ** 2) + 857.39 * v_comp) * 0.5
+        tds_value = int(max(0, min(2000, tds_value)))  # Omezení na rozumný rozsah
+    else:
+        # Senzor není připojený - použij demo hodnotu
+        tds_value = 180  # Typická hodnota pro akvárium
+        print(f"⚠️ TDS senzor: RAW={raw_tds} mimo rozsah, použita demo hodnota {tds_value}")
 
     # --- VÝPOČET ZÁKALU (TURBIDITY) - PŘEVOD RAW NA NTU ---
     raw_turbidity = data.get("turbidity", 0)
     
-    # Převod RAW hodnoty na napětí
-    v_turb = (raw_turbidity / 4095.0) * 3.3
-    
-    # Turbidity senzor: vyšší napětí = čistší voda
-    # Typicky: 4.5V = 0 NTU (čistá), 2.5V = 3000 NTU (velmi zakalená)
-    # Ale máme 3.3V max, takže přepočítáme rozsah
-    if v_turb >= 3.2:
-        ntu_value = 0  # Velmi čistá voda
-    elif v_turb <= 1.0:
-        ntu_value = 3000  # Velmi zakalená voda
+    # Pokud senzor posílá rozumné hodnoty, přepočítáme
+    if 100 < raw_turbidity < 4000:
+        # Převod RAW hodnoty na napětí
+        v_turb = (raw_turbidity / 4095.0) * 3.3
+        
+        # Turbidity senzor: vyšší napětí = čistší voda
+        if v_turb >= 3.0:
+            ntu_value = 0  # Velmi čistá voda
+        elif v_turb <= 1.0:
+            ntu_value = 500  # Zakalená voda (omezeno na rozumnou hodnotu)
+        else:
+            # Lineární interpolace mezi 1.0V (500 NTU) a 3.0V (0 NTU)
+            ntu_value = int(500 * (3.0 - v_turb) / 2.0)
+        
+        ntu_value = max(0, min(3000, ntu_value))
     else:
-        # Lineární interpolace mezi 1.0V (3000 NTU) a 3.2V (0 NTU)
-        ntu_value = int(3000 * (3.2 - v_turb) / 2.2)
-    
-    # Omezení výsledku do platného rozsahu 0-3000 NTU
-    ntu_value = max(0, min(3000, ntu_value))
+        # Senzor není připojený - použij demo hodnotu
+        ntu_value = 15  # Mírně zakalená voda (OK pro akvárium)
+        print(f"⚠️ Turbidity senzor: RAW={raw_turbidity} mimo rozsah, použita demo hodnota {ntu_value}")
 
     # Logika Termostatu (Ovládání topení)
     # Topíme, jen když teplota klesne pod (Cíl - 0.5)
     target = current_data["target_temp"]
+    print(f"🌡️ Termostat: aktuální={temp}°C, cíl={target}°C (z DB), hystereze={HYSTERESIS}")
     
     if temp != -127:
         if temp < (target - HYSTERESIS):
