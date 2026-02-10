@@ -406,6 +406,17 @@ async def receive_data(data: dict):
     else:
         temp = -127
 
+    # --- VÝPOČET pH Z RAW ADC HODNOTY ---
+    raw_ph = data.get("ph", 0)
+    # ESP32 posílá průměr z 10 čtení (RAW ADC 0-4095)
+    # Převod na napětí (3.3V reference)
+    v_ph = (raw_ph / 4095.0) * 3.3
+    # Lineární převod napětí na pH (kalibrováno pro typické pH sondy)
+    # pH 7 = cca 2.5V, pH 4 = cca 3.0V, pH 10 = cca 2.0V
+    # Vzorec: pH = 7 + (2.5 - napětí) * 3.5
+    ph_value = 7.0 + (2.5 - v_ph) * 3.5
+    ph_value = round(max(0, min(14, ph_value)), 1)  # Omezení na 0-14
+
     # --- VÝPOČET TDS S TEPLOTNÍ KOMPENZACÍ ---
     raw_tds = data.get("tds", 0)
     # Použít aktuální teplotu, nebo 25°C pokud není validní
@@ -430,15 +441,19 @@ async def receive_data(data: dict):
     # Převod RAW hodnoty na napětí
     v_turb = (raw_turbidity / 4095.0) * 3.3
     
-    # Standardní aproximační vzorec pro převod napětí na NTU
-    if v_turb < 2.5:
-        ntu_value = 3000  # Velmi zakalená voda (nízké napětí = vysoký zákal)
+    # Turbidity senzor: vyšší napětí = čistší voda
+    # Typicky: 4.5V = 0 NTU (čistá), 2.5V = 3000 NTU (velmi zakalená)
+    # Ale máme 3.3V max, takže přepočítáme rozsah
+    if v_turb >= 3.2:
+        ntu_value = 0  # Velmi čistá voda
+    elif v_turb <= 1.0:
+        ntu_value = 3000  # Velmi zakalená voda
     else:
-        ntu_value = -1120.4 * (v_turb ** 2) + 5742.3 * v_turb - 4352.9
+        # Lineární interpolace mezi 1.0V (3000 NTU) a 3.2V (0 NTU)
+        ntu_value = int(3000 * (3.2 - v_turb) / 2.2)
     
     # Omezení výsledku do platného rozsahu 0-3000 NTU
     ntu_value = max(0, min(3000, ntu_value))
-    ntu_value = int(ntu_value)
 
     # Logika Termostatu (Ovládání topení)
     # Topíme, jen když teplota klesne pod (Cíl - 0.5)
@@ -453,7 +468,7 @@ async def receive_data(data: dict):
     
     current_data.update({
         "temp": temp,
-        "ph": data.get("ph", 0),
+        "ph": ph_value,          # Uložení vypočtené hodnoty pH (0-14)
         "turbidity": ntu_value,  # Uložení vypočtené hodnoty v NTU
         "tds": tds_value,        # Uložení vypočtené hodnoty v PPM
         "water_level": data.get("water_level", 0),
@@ -473,7 +488,7 @@ async def receive_data(data: dict):
             "temp": temp,
             "tds": tds_value,
             "ntu": ntu_value,
-            "ph": data.get("ph", 0)
+            "ph": ph_value
         })
         last_history_save = current_timestamp
         current_data["history_count"] = len(history)
@@ -497,7 +512,9 @@ async def receive_data(data: dict):
     # Predikce údržby (TDS)
     current_data["tds_prediction_days"] = predict_tds_maintenance(list(history), tds_value, TDS_LIMIT)
     
-    print(f"✅ Data: {temp}°C (Cíl: {target}°C) | TDS: {tds_value} PPM | Zákal: {ntu_value} NTU | Topení: {heater_cmd}")
+    # Debug výpis RAW hodnot a vypočtených hodnot
+    print(f"📊 RAW: pH={raw_ph}, TDS={raw_tds}, Turb={raw_turbidity}")
+    print(f"✅ Data: {temp}°C (Cíl: {target}°C) | pH: {ph_value} | TDS: {tds_value} PPM | Zákal: {ntu_value} NTU | Topení: {heater_cmd}")
     
     return {"message": "Data saved", "heater_cmd": heater_cmd}
 
