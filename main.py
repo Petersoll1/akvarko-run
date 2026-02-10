@@ -5,15 +5,69 @@ from fastapi.middleware.cors import CORSMiddleware
 from collections import deque
 import statistics
 import time
+import sqlite3
+import os
 
 app = FastAPI()
 
-# --- GLOBÁLNÍ NASTAVENÍ (přežije po dobu běhu serveru) ---
-# Tyto hodnoty se používají pro termostat a zobrazování
+# --- DATABÁZE PRO NASTAVENÍ ---
+DB_FILE = "aquarium_settings.db"
+
+def init_db():
+    """Inicializuje databázi a vytvoří tabulku pokud neexistuje."""
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value REAL
+        )
+    """)
+    # Vložit výchozí hodnoty pokud neexistují
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('target_temp', 24.0)")
+    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('tank_volume', 50)")
+    conn.commit()
+    conn.close()
+    print("✅ Databáze inicializována")
+
+def get_setting(key, default=None):
+    """Načte hodnotu z databáze."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        result = cursor.fetchone()
+        conn.close()
+        if result:
+            return result[0]
+        return default
+    except Exception as e:
+        print(f"❌ Chyba při čtení z DB: {e}")
+        return default
+
+def set_setting(key, value):
+    """Uloží hodnotu do databáze."""
+    try:
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        conn.commit()
+        conn.close()
+        print(f"💾 DB: {key} = {value}")
+        return True
+    except Exception as e:
+        print(f"❌ Chyba při zápisu do DB: {e}")
+        return False
+
+# Inicializace databáze při startu
+init_db()
+
+# --- GLOBÁLNÍ NASTAVENÍ (načteno z databáze) ---
 SETTINGS = {
-    "target_temp": 24.0,
-    "tank_volume": 50
+    "target_temp": get_setting("target_temp", 24.0),
+    "tank_volume": int(get_setting("tank_volume", 50))
 }
+print(f"📊 Načteno z DB: target_temp={SETTINGS['target_temp']}°C, tank_volume={SETTINGS['tank_volume']}l")
 
 app.add_middleware(
     CORSMiddleware,
@@ -307,6 +361,9 @@ async def dashboard(request: Request):
 async def get_settings():
     """Vrací aktuální nastavení pro frontend nebo jiné klienty."""
     global SETTINGS, heater_cmd
+    # Načíst z DB pro jistotu
+    SETTINGS["target_temp"] = get_setting("target_temp", SETTINGS["target_temp"])
+    SETTINGS["tank_volume"] = int(get_setting("tank_volume", SETTINGS["tank_volume"]))
     return {
         "target_temp": SETTINGS["target_temp"],
         "tank_volume": SETTINGS["tank_volume"],
@@ -325,6 +382,7 @@ async def update_settings(data: dict):
             new_target = float(data["target_temp"])
             SETTINGS["target_temp"] = new_target
             current_data["target_temp"] = new_target
+            set_setting("target_temp", new_target)  # Uložit do DB
             print(f"🎯 Nová cílová teplota: {new_target}°C")
         
         # Aktualizace objemu akvária
@@ -332,6 +390,7 @@ async def update_settings(data: dict):
             new_volume = max(1, int(data["tank_volume"]))
             SETTINGS["tank_volume"] = new_volume
             current_data["tank_volume"] = new_volume
+            set_setting("tank_volume", new_volume)  # Uložit do DB
             print(f"🐠 Nový objem akvária: {new_volume} l")
         
         # Přepočítáme alerty a doporučení
@@ -497,14 +556,16 @@ async def set_target(data: dict):
             new_target = float(data.get("target_temp", 24.0))
             SETTINGS["target_temp"] = new_target
             current_data["target_temp"] = new_target
-            print(f"🎯 [set_target] Nová cílová teplota: {new_target}°C (SETTINGS aktualizováno)")
+            set_setting("target_temp", new_target)  # Uložit do DB
+            print(f"🎯 [set_target] Nová cílová teplota: {new_target}°C")
         
         # Uživatel změnil objem akvária
         if "tank_volume" in data:
             new_volume = max(1, int(data.get("tank_volume", 50)))
             SETTINGS["tank_volume"] = new_volume
             current_data["tank_volume"] = new_volume
-            print(f"🐠 [set_target] Nový objem akvária: {new_volume} l (SETTINGS aktualizováno)")
+            set_setting("tank_volume", new_volume)  # Uložit do DB
+            print(f"🐠 [set_target] Nový objem akvária: {new_volume} l")
         
         # Hned přepočítáme alerty s novou cílovou teplotou
         alerts = check_health(current_data)
@@ -513,8 +574,6 @@ async def set_target(data: dict):
         # Přegenerujeme doporučení
         advice = generate_advice(current_data, SETTINGS["tank_volume"])
         current_data["advice"] = advice
-        
-        print(f"📊 SETTINGS stav: target_temp={SETTINGS['target_temp']}, tank_volume={SETTINGS['tank_volume']}")
         
         return {
             "status": "ok", 
