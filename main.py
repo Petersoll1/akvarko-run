@@ -5,40 +5,71 @@ from fastapi.middleware.cors import CORSMiddleware
 from collections import deque
 import statistics
 import time
-import sqlite3
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
 
 app = FastAPI()
 
-# --- DATABÁZE PRO NASTAVENÍ ---
-DB_FILE = "aquarium_settings.db"
+# --- EXTERNÍ POSTGRESQL DATABÁZE (Render Free Tier) ---
+DATABASE_URL = os.environ.get("DATABASE_URL", "")
+
+def get_db_connection():
+    """Vytvoří připojení k PostgreSQL databázi."""
+    if not DATABASE_URL:
+        print("⚠️ DATABASE_URL není nastavena - používám výchozí hodnoty")
+        return None
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        return conn
+    except Exception as e:
+        print(f"❌ Chyba připojení k DB: {e}")
+        return None
 
 def init_db():
-    """Inicializuje databázi a vytvoří tabulku pokud neexistuje."""
-    conn = sqlite3.connect(DB_FILE)
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS settings (
-            key TEXT PRIMARY KEY,
-            value REAL
-        )
-    """)
-    # Vložit výchozí hodnoty pokud neexistují
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('target_temp', 24.0)")
-    cursor.execute("INSERT OR IGNORE INTO settings (key, value) VALUES ('tank_volume', 50)")
-    conn.commit()
-    conn.close()
-    print("✅ Databáze inicializována")
+    """Inicializuje tabulku v PostgreSQL."""
+    conn = get_db_connection()
+    if not conn:
+        return False
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS settings (
+                key TEXT PRIMARY KEY,
+                value REAL
+            )
+        """)
+        # Vložit výchozí hodnoty pokud neexistují
+        cursor.execute("""
+            INSERT INTO settings (key, value) VALUES ('target_temp', 24.0)
+            ON CONFLICT (key) DO NOTHING
+        """)
+        cursor.execute("""
+            INSERT INTO settings (key, value) VALUES ('tank_volume', 50)
+            ON CONFLICT (key) DO NOTHING
+        """)
+        conn.commit()
+        cursor.close()
+        conn.close()
+        print("✅ PostgreSQL databáze inicializována")
+        return True
+    except Exception as e:
+        print(f"❌ Chyba inicializace DB: {e}")
+        return False
 
 def get_setting(key, default=None):
-    """Načte hodnotu z databáze."""
+    """Načte hodnotu z PostgreSQL databáze."""
+    conn = get_db_connection()
+    if not conn:
+        return default
     try:
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute("SELECT value FROM settings WHERE key = ?", (key,))
+        cursor.execute("SELECT value FROM settings WHERE key = %s", (key,))
         result = cursor.fetchone()
+        cursor.close()
         conn.close()
         if result:
+            print(f"📖 DB čtení: {key} = {result[0]}")
             return result[0]
         return default
     except Exception as e:
@@ -46,14 +77,20 @@ def get_setting(key, default=None):
         return default
 
 def set_setting(key, value):
-    """Uloží hodnotu do databáze."""
+    """Uloží hodnotu do PostgreSQL databáze."""
+    conn = get_db_connection()
+    if not conn:
+        return False
     try:
-        conn = sqlite3.connect(DB_FILE)
         cursor = conn.cursor()
-        cursor.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", (key, value))
+        cursor.execute("""
+            INSERT INTO settings (key, value) VALUES (%s, %s)
+            ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
+        """, (key, value))
         conn.commit()
+        cursor.close()
         conn.close()
-        print(f"💾 DB: {key} = {value}")
+        print(f"💾 DB zápis: {key} = {value}")
         return True
     except Exception as e:
         print(f"❌ Chyba při zápisu do DB: {e}")
@@ -62,12 +99,12 @@ def set_setting(key, value):
 # Inicializace databáze při startu
 init_db()
 
-# --- GLOBÁLNÍ NASTAVENÍ (načteno z databáze) ---
+# --- GLOBÁLNÍ NASTAVENÍ (cache z databáze) ---
 SETTINGS = {
     "target_temp": get_setting("target_temp", 24.0),
     "tank_volume": int(get_setting("tank_volume", 50))
 }
-print(f"📊 Načteno z DB: target_temp={SETTINGS['target_temp']}°C, tank_volume={SETTINGS['tank_volume']}l")
+print(f"📊 Načteno: target_temp={SETTINGS['target_temp']}°C, tank_volume={SETTINGS['tank_volume']}l")
 
 app.add_middleware(
     CORSMiddleware,
