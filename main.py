@@ -471,13 +471,13 @@ async def receive_data(data: dict):
 
     # --- VÝPOČET pH Z RAW ADC HODNOTY ---
     raw_ph = data.get("ph", 0)
-    # ESP32 ADC: 12-bit (0-4095), napětí 0-3.3V
+    # ESP32 ADC: 12-bit (0-4095)
+    # Typický pH senzor: vyšší napětí (RAW) = NIŽŠÍ pH
+    # RAW 4095 (3.3V) = pH 0, RAW 0 (0V) = pH 14
+    # Plynulé mapování celého rozsahu
+    ph_value = 14.0 - (raw_ph / 4095.0) * 14.0
+    ph_value = round(ph_value, 1)  # Zaokrouhlení na 1 desetinné místo
     voltage_ph = (raw_ph / 4095.0) * 3.3
-    # pH senzor s opačnou polaritou: vyšší napětí = vyšší pH
-    # Kalibrační body: 1.5V = pH 4.0, 2.0V = pH 7.0, 2.5V = pH 10.0
-    # Lineární mapování: pH = 4 + (voltage - 1.5) * 6
-    ph_value = 4.0 + (voltage_ph - 1.5) * 6.0
-    ph_value = round(max(4, min(10, ph_value)), 1)  # Omezení na realistický rozsah 4-10
     print(f"📊 pH: RAW={raw_ph}, Voltage={voltage_ph:.2f}V, pH={ph_value}")
 
     # --- VÝPOČET TDS ---
@@ -613,3 +613,4 @@ async def set_target(data: dict):
     except Exception as e:
         print(f"❌ Chyba v set_target: {e}")
         return {"status": "error", "message": str(e)}
+        
