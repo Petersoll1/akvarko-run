@@ -451,13 +451,14 @@ async def update_settings(data: dict):
 
 @app.post("/api/data")
 async def receive_data(data: dict):
-    global current_data, heater_cmd, history, last_history_save
+    global current_data, heater_cmd, history, last_history_save, SETTINGS
     
-    # VŽDY načíst z databáze (pro multi-worker prostředí)
-    db_target = get_setting("target_temp", 24.0)
-    db_volume = int(get_setting("tank_volume", 50))
-    current_data["target_temp"] = db_target
-    current_data["tank_volume"] = db_volume
+    # POUŽÍT IN-MEMORY SETTINGS jako zdroj pravdy (NE databázi!)
+    # Databáze se používá jen při startu a při uživatelských změnách
+    target_temp = SETTINGS["target_temp"]
+    tank_volume = SETTINGS["tank_volume"]
+    current_data["target_temp"] = target_temp
+    current_data["tank_volume"] = tank_volume
     
     current_timestamp = time.time()
     formatted_time = time.strftime("%H:%M:%S", time.localtime(current_timestamp))
@@ -613,4 +614,3 @@ async def set_target(data: dict):
     except Exception as e:
         print(f"❌ Chyba v set_target: {e}")
         return {"status": "error", "message": str(e)}
-        
