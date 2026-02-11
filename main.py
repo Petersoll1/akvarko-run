@@ -375,14 +375,12 @@ def check_health(data):
 
 @app.get("/")
 async def dashboard(request: Request):
-    global current_data
+    global current_data, SETTINGS
     
-    # VŽDY načíst z databáze (pro multi-worker prostředí)
-    db_target = get_setting("target_temp", 24.0)
-    db_volume = int(get_setting("tank_volume", 50))
-    current_data["target_temp"] = db_target
-    current_data["tank_volume"] = db_volume
-    print(f"📄 Dashboard: target_temp={db_target}°C z DB")
+    # Použít IN-MEMORY SETTINGS (NE databázi!)
+    current_data["target_temp"] = SETTINGS["target_temp"]
+    current_data["tank_volume"] = SETTINGS["tank_volume"]
+    print(f"📄 Dashboard: target_temp={SETTINGS['target_temp']}°C z RAM")
     
     # Offline detekce (20 sekund)
     time_diff = time.time() - current_data["last_timestamp"]
@@ -400,9 +398,7 @@ async def dashboard(request: Request):
 async def get_settings():
     """Vrací aktuální nastavení pro frontend nebo jiné klienty."""
     global SETTINGS, heater_cmd
-    # Načíst z DB pro jistotu
-    SETTINGS["target_temp"] = get_setting("target_temp", SETTINGS["target_temp"])
-    SETTINGS["tank_volume"] = int(get_setting("tank_volume", SETTINGS["tank_volume"]))
+    # Vrátit IN-MEMORY hodnoty (NE z databáze!)
     return {
         "target_temp": SETTINGS["target_temp"],
         "tank_volume": SETTINGS["tank_volume"],
@@ -614,3 +610,22 @@ async def set_target(data: dict):
     except Exception as e:
         print(f"❌ Chyba v set_target: {e}")
         return {"status": "error", "message": str(e)}
+
+
+@app.get("/debug")
+async def debug_settings():
+    """Debug endpoint - ukazuje co je v RAM vs co je v DB."""
+    db_target = get_setting("target_temp", "CHYBA")
+    db_volume = get_setting("tank_volume", "CHYBA")
+    return {
+        "ram": {
+            "target_temp": SETTINGS["target_temp"],
+            "tank_volume": SETTINGS["tank_volume"]
+        },
+        "database": {
+            "target_temp": db_target,
+            "tank_volume": db_volume
+        },
+        "current_data_target": current_data["target_temp"],
+        "heater_cmd": heater_cmd
+    }
